@@ -3,6 +3,8 @@ from keras.layers import Input, Convolution2D, MaxPooling2D
 from keras.objectives import mean_absolute_error
 from keras.models import Model
 from keras.optimizers import Adam
+from keras import backend as K
+import tensorflow as tf
 
 EPS = 1e-5
 
@@ -23,7 +25,7 @@ def calc_iou(box_pred,box_true):
     I = (xr-xl)*(yb-yt)
     U = Apred+Atrue-I
 
-    return float(I)/(U+EPS)
+    return float(I)/(U)
 
 def denormalize_bbox(bbox, W, H, S, i,j):
     '''
@@ -77,7 +79,13 @@ Nfilter = 16
 Wfilter = 3
 lr = 1e-3
 
-img = Input(shape=(H,W,C))
+#img = Input(shape=(H,W,C))
+sess = tf.Session()
+K.set_session(sess)
+
+img = tf.placeholder(tf.float32, shape=(None,H,W,C))
+true_box = tf.placeholder(tf.float32, shape=(None,H/2,W/2,4))
+true_conf = tf.placeholder(tf.float32, shape=(None,H/2,W/2,1))
 
 out = MaxPooling2D(pool_size=(2,2))(img)
 out = Convolution2D(Nfilter, Wfilter, Wfilter,
@@ -86,20 +94,17 @@ out = Convolution2D(Nfilter, Wfilter, Wfilter,
     activation='relu', border_mode='same')(out)
 out = Convolution2D(Nfilter, Wfilter, Wfilter,
     activation='relu', border_mode='same')(out)
-out = Convolution2D(4, Wfilter, Wfilter,
+out_box = Convolution2D(4, Wfilter, Wfilter,
     activation='relu', border_mode='same')(out)
+out_conf = Convolution2D(1, Wfilter, Wfilter,
+    activation='sigmoid', border_mode='same')(out)
 
-adam = Adam(lr)
-
-net = Model(img,out)
-net.compile(optimizer=adam,
-    loss='mean_absolute_error')
-
-yhat = net.predict(X)
-
-P = np.zeros(yhat.shape)
-
+yhat = sess.run(out_box,feed_dict={img:X})
 S = yhat.shape[1]
+
+P = np.zeros((1,S,S,1))
+Y = np.zeros(yhat.shape)
+
 for bbox in y:
     best_iou = 0.0
     for i in range(0,S):
@@ -109,6 +114,5 @@ for bbox in y:
             if iou > best_iou:
                 best_iou = iou
                 best_index = (i,j)
-    P[0,best_index[0],best_index[1],:] = normalize_bbox(bbox,W,H,S)
-
-net.train_on_batch(X,P)
+    P[0,best_index[0],best_index[1],0] = 1.0
+    Y[0,best_index[0],best_index[1],:] = normalize_bbox(bbox,W,H,S)
