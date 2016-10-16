@@ -22,6 +22,8 @@ def calc_iou(box_pred,box_true):
     xl = max(box_pred[0]-box_pred[2]/2, box_true[0]-box_true[2]/2)
     yb = min(box_pred[1]+box_pred[3]/2, box_true[1]+box_true[3]/2)
     yt = max(box_pred[1]-box_pred[3]/2, box_true[1]-box_true[3]/2)
+    if ((xr-xl) <= 0) or ((yb-yt) <=0):
+        return 0.0
     I = (xr-xl)*(yb-yt)
     U = Apred+Atrue-I
 
@@ -111,7 +113,7 @@ for bbox in y:
         for j in range(0,S):
             bbox_pred_denorm = denormalize_bbox(yhat[0,i,j,:],W,H,S,i,j)
             iou = calc_iou(bbox_pred_denorm, bbox)
-            if iou > best_iou:
+            if iou >= best_iou:
                 best_iou = iou
                 best_index = (i,j)
     P[0,best_index[0],best_index[1],0] = 1.0
