@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 EPS = 1e-5
 
 def calc_iou(box_pred,box_true):
@@ -94,3 +95,72 @@ def getBboxLabels(yhat,y,W,H,S):
         # print 'boxpred={}'.format(best_box_pred)
         # print 'box={}'.format(best_box)
     return boxes,inds
+
+def scalePredictions(prediction, output_shape, S):
+    """
+    scales the yolo predictions x and y coordinates to be image fractions
+
+    Args:
+        prediction (tensor): NbatchxSxSxBx(5+Nclasses) yolo output tensor
+        output_shape (tuple): tuple containing prediction output shape
+        S (int): Number of grid cells per image dimension
+
+    Returns:
+        tensor: NbatchxSxSxBx(5+Nclasses)
+    """
+    offset = np.zeros(output_shape)
+    scale = np.ones(output_shape)
+
+    for i in range(S):
+        for j in range(S):
+            offset[:,i,j,:,0] = float(j)/S
+            offset[:,i,j,:,1] = float(i)/S
+            scale[:,i,j,:,:2] = 1.0/S
+
+    return prediction*scale + offset
+    
+def IOU(prediction,labels):
+    """
+    calculates the IOU between labels and predicted bounding boxes in each
+    grid cell
+
+    Args:
+        prediction (tensor): NbatchxSxSxBx4 (x,y,w,h) yolo bounding box tensor, must
+        be already scaled so that x and y are represent whole image ratios
+        labels (numpy array): NbatchxSxSxBx4 (x,y,w,h) label bounding box array
+
+    Returns:
+        tensor: NbatchxSxSxB tensor of IOUs
+    """
+    pred_xl = prediction[:,:,:,:,0]
+    pred_yt = prediction[:,:,:,:,1]
+    pred_xr = prediction[:,:,:,:,0]+prediction[:,:,:,:,2]/2.0
+    pred_yb = prediction[:,:,:,:,1]+prediction[:,:,:,:,3]/2.0
+
+    lab_xl = labels[:,:,:,:,0]
+    lab_yt = labels[:,:,:,:,1]
+    lab_xr = labels[:,:,:,:,0]+labels[:,:,:,:,2]/2.0
+    lab_yb = labels[:,:,:,:,1]+labels[:,:,:,:,3]/2.0
+
+    xr = tf.select(tf.less_equal(pred_xr,lab_xr), pred_xr, lab_xr)
+    xl = tf.select(tf.greater_equal(pred_xl,lab_xl), pred_xl,lab_xl)
+    yb = tf.select(tf.less_equal(pred_yb,lab_yb), pred_yb,lab_yb)
+    yt = tf.select(tf.greater_equal(pred_yt,lab_yt),pred_yt,lab_yt)
+
+    isct = (xr-xl)*(yb-yt)
+    union = prediction[:,:,:,:,2]*prediction[:,:,:,:,3] +\
+     labels[:,:,:,:,2]*labels[:,:,:,:,3] - isct
+
+    return isct/(union + EPS)
+
+def yolo_loss(prediction, labels, lam_coord, lam_noobj, S):
+    """
+    calculates the yolo loss function as a tensorflow tensor
+
+    Args:
+        prediction (tensor): NbatchxSxSxBx(5+Nclasses) (x,y,w,h,p) yolo bounding box tensor
+        labels (tensor):  NbatchxSxSxBx(5+Nclasses) (x,y,w,h,p) bounding box labels
+        lam_coord (float): scaling coefficient for coordinate loss
+        lam_noobj (float): scaling coefficient for loss where no object is present
+        S (int): number of cells per image axis
+    """
